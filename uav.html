@@ -39,7 +39,10 @@
             cursor: pointer;
             border: none;
             border-radius: 5px;
+            padding: 0; 
+            line-height: 30px; 
         }
+        
         #user-count {
             color: white;
             font-family: sans-serif;
@@ -48,6 +51,141 @@
             min-width: 80px;
             text-align: center;
         }
+
+        #drone-controls {
+            position: absolute;
+            top: 15px;
+            right: 15px; 
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column; 
+            align-items: center;
+            z-index: 100;
+        }
+        #drone-controls button {
+            width: 30px;
+            height: 30px;
+            font-size: 20px;
+            font-weight: bold;
+            margin: 5px 0; 
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            padding: 0; 
+            line-height: 30px; 
+        }
+        
+        #drone-height-label {
+            color: white;
+            font-family: sans-serif;
+            font-size: 14px;
+            margin: 5px 0;
+            min-width: 80px;
+            text-align: center;
+        }
+        
+        /* --- IMPROVED CSS FOR REAL-TIME STATS PANEL --- */
+        #real-time-stats {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            right: 10px;
+            
+            background: rgba(0, 0, 0, 0.3);
+            -webkit-backdrop-filter: blur(5px);
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            
+            padding: 12px;
+            padding-bottom: 10px;
+            border-radius: 12px;
+            z-index: 100;
+            
+            display: flex;
+            align-items: center;
+            
+            white-space: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+        
+        #real-time-stats::-webkit-scrollbar {
+            height: 6px;
+        }
+        #real-time-stats::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 3px;
+        }
+        #real-time-stats::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 3px;
+        }
+        #real-time-stats::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        .user-stat-card {
+            flex-shrink: 0;
+            min-width: 160px;
+            
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin-right: 12px;
+            
+            font-family: sans-serif;
+            color: white;
+            
+            transition: all 0.2s ease-out;
+        }
+
+        .user-stat-card:hover {
+            transform: translateY(-2px);
+            background: rgba(255, 255, 255, 0.12);
+        }
+
+        .user-stat-card .label {
+            display: block;
+            font-weight: 600;
+            color: #c0c0c0;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .user-stat-card .value-container {
+            display: flex;
+            align-items: baseline;
+            justify-content: flex-end;
+            margin-top: 6px;
+        }
+        
+        .user-stat-card .value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #50fa7b;
+        }
+
+        .user-stat-card .unit {
+            font-size: 11px;
+            font-weight: 500;
+            color: #c0c0c0;
+            margin-left: 5px;
+        }
+        
+        .user-stat-card .danger {
+            color: #ff5555;
+            animation: pulse-danger 1.5s infinite alternate;
+        }
+
+        @keyframes pulse-danger {
+            from { opacity: 0.7; }
+            to { opacity: 1; }
+        }
+
     </style>
 </head>
 <body>
@@ -58,6 +196,16 @@
         <div id="user-count">6 Users</div>
         <button id="add-user" title="Add User">+</button>
     </div>
+
+    <div id="drone-controls">
+        <div id="drone-height-label">Height: 37m</div>
+        <button id="increase-height" title="Increase Height">+</button>
+        <button id="decrease-height" title="Decrease Height">-</button>
+        <button id="toggle-roam" title="Toggle Random Roaming">🔄</button>
+    </div>
+
+    <div id="real-time-stats">
+        </div>
 
     <script type="importmap">
     {
@@ -70,6 +218,7 @@
     <script type="module">
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
         let scene, camera, renderer, controls;
         let uav, gbs;
@@ -77,22 +226,31 @@
         let signalLines = [];
         let gbsToUavLine; 
         let interactiveObjects = [];
+        let loadedBuildingModel; 
+        
+        let droneBaseHeight = 37;
+        let droneHeightLabel;
+        let droneHeightControls; 
+        
+        let isRoaming = false;
+        let uavRoamTarget = new THREE.Vector3();
+        let toggleRoamButton;
 
-        // Drag Logic
+        let userStatsContainer;
+        const UAV_POWER = 10000;
+
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
-        const hoverPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -15); // For UAV
-        const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // For Users
+        const hoverPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -15);
+        const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
         const intersection = new THREE.Vector3();
         let isDragging = false;
         let draggedObject = null; 
 
-        // Hover Logic
         const hoverRay = new THREE.Raycaster();
         const tooltip = document.getElementById('tooltip');
         let lastHovered = null;
 
-        // UI Elements
         const userCountLabel = document.getElementById('user-count');
 
         init();
@@ -148,21 +306,22 @@
             water.position.set(0, -0.1, -60);
             scene.add(water);
 
-            // --- 1. Create Models from Code ---
-
             // Inoperative GBS (Base Station)
-            gbs = createGbsBaseStation(); // Using the new function
+            gbs = createGbsBaseStation();
             gbs.position.set(-30, 0, -20);
-            gbs.userData.name = "Base Station"; // Updated name
+            gbs.userData.name = "Base Station";
             scene.add(gbs);
             interactiveObjects.push(gbs);
 
             // Single UAV (UmBS - Drone)
-            uav = createDrone();
+            uav = createDrone(); 
             uav.position.set(0, 15, 0); 
             uav.userData.name = "UAV (Drone)";
             scene.add(uav);
             interactiveObjects.push(uav);
+            
+            // Get stats panel *before* adding users
+            userStatsContainer = document.getElementById('real-time-stats');
 
             // Users (UEs - Persons)
             const uePositions = [
@@ -174,9 +333,9 @@
             updateUserCount();
 
             // Create Tower-to-UAV Ray (Red)
-            const gbsTopPos = gbs.position.clone().add(new THREE.Vector3(0, 34.5, 0)); // Point to top of new antenna
+            const gbsTopPos = gbs.position.clone().add(new THREE.Vector3(0, 31, 0)); 
             const gbsRayMat = new THREE.LineBasicMaterial({
-                color: 0xff0000, // Red
+                color: 0xff0000,
                 linewidth: 3,
                 transparent: true,
                 opacity: 0.8
@@ -186,17 +345,37 @@
             gbsToUavLine = new THREE.Line(gbsRayGeo, gbsRayMat);
             scene.add(gbsToUavLine);
 
-            // Buildings (Town-like)
+            // Load GLB Buildings
             const buildingPositions = [
                 [40, 0, 40], [-40, 0, 30], [20, 0, -30], [-10, 0, 40], [50, 0, -10], [-50, 0, -40], [45, 0, 10]
             ];
-            buildingPositions.forEach((pos, index) => {
-                const building = createBuilding();
-                building.position.set(pos[0], pos[1], pos[2]);
-                building.userData.name = `Building ${index + 1}`;
-                scene.add(building);
-                interactiveObjects.push(building);
-            });
+            const loader = new GLTFLoader();
+            loader.load(
+                'building.glb', 
+                function (gltf) {
+                    loadedBuildingModel = gltf.scene;
+                    
+                    loadedBuildingModel.traverse(function (node) {
+                        if (node.isMesh) {
+                            node.castShadow = true;
+                            node.receiveShadow = true;
+                        }
+                    });
+
+                    buildingPositions.forEach((pos, index) => {
+                        const buildingClone = loadedBuildingModel.clone();
+                        buildingClone.position.set(pos[0], pos[1], pos[2]);
+                        buildingClone.scale.set(3, 6, 4); 
+                        buildingClone.userData.name = `Building ${index + 1}`;
+                        scene.add(buildingClone);
+                        interactiveObjects.push(buildingClone);
+                    });
+                },
+                undefined, 
+                function (error) {
+                    console.error('Error loading building.glb:', error);
+                }
+            );
 
             // Trees
             for (let i = 0; i < 20; i++) {
@@ -210,6 +389,15 @@
                 interactiveObjects.push(tree);
             }
             
+            droneHeightControls = [
+                document.getElementById('increase-height'),
+                document.getElementById('decrease-height')
+            ];
+
+            toggleRoamButton = document.getElementById('toggle-roam');
+            toggleRoamButton.addEventListener('click', toggleRoaming);
+            uavRoamTarget.copy(uav.position); 
+
             // Event Listeners
             window.addEventListener('resize', onWindowResize);
             renderer.domElement.addEventListener('mousedown', onMouseDown);
@@ -217,106 +405,262 @@
             renderer.domElement.addEventListener('mouseup', onMouseUp);
             document.getElementById('add-user').addEventListener('click', () => addUser());
             document.getElementById('remove-user').addEventListener('click', removeUser);
+
+            // Drone Height Listeners
+            droneHeightLabel = document.getElementById('drone-height-label');
+            droneHeightControls[0].addEventListener('click', () => {
+                droneBaseHeight += 2;
+                updateDroneHeightLabel();
+            });
+            droneHeightControls[1].addEventListener('click', () => {
+                droneBaseHeight = Math.max(5, droneBaseHeight - 2);
+                updateDroneHeightLabel();
+            });
+        }
+        
+        // --- HELPER FUNCTIONS ---
+        
+        function updateDroneHeightLabel() {
+            if (droneHeightLabel) {
+                droneHeightLabel.textContent = `Height: ${droneBaseHeight}m`;
+            }
         }
 
-        // --- Helper Functions to Create Models ---
+        function toggleRoaming() {
+            isRoaming = !isRoaming;
+            
+            if (isRoaming) {
+                setNewRoamTarget();
+                toggleRoamButton.style.background = '#00ff00';
+            } else {
+                uavRoamTarget.copy(uav.position); 
+                toggleRoamButton.style.background = '';
+            }
+        }
+
+        function setNewRoamTarget() {
+            const rX = Math.random() * 80 - 40;
+            const rZ = Math.random() * 80 - 40;
+            uavRoamTarget.set(rX, droneBaseHeight, rZ);
+        }
+        
+        // --- Create Model Functions ---
 
         function createDrone() {
             const droneGroup = new THREE.Group();
-            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.8, roughness: 0.3 });
-            const bodyGeo = new THREE.BoxGeometry(3, 0.5, 2.5);
-            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            
+            // --- Materials (White & Black Scheme) ---
+            const whiteBodyMat = new THREE.MeshStandardMaterial({ 
+                color: 0xffffff, // White body
+                metalness: 0.2, 
+                roughness: 0.4 
+            });
+            const darkAccentMat = new THREE.MeshStandardMaterial({ 
+                color: 0x222222, // Dark grey/black for arms, gear, motors
+                metalness: 0.1, 
+                roughness: 0.6 
+            });
+            const darkTopPlateMat = new THREE.MeshStandardMaterial({
+                color: 0x444444, // Slightly lighter black for the top plate
+                metalness: 0.1,
+                roughness: 0.5
+            });
+            const propMat = new THREE.MeshStandardMaterial({ 
+                color: 0x111111, // Very dark, slightly transparent props
+                roughness: 0.8, 
+                transparent: true, 
+                opacity: 0.7 
+            });
+            const cameraMat = new THREE.MeshStandardMaterial({ 
+                color: 0x000000, 
+                metalness: 0.8, 
+                roughness: 0.2 
+            });
+            const gimbalMat = new THREE.MeshStandardMaterial({
+                color: 0x333333,
+                metalness: 0.4,
+                roughness: 0.5
+            });
+            // Emissive lights (colors remain for function)
+            const greenLightMat = new THREE.MeshStandardMaterial({
+                color: 0x00ff00,
+                emissive: 0x00ff00,
+                emissiveIntensity: 2
+            });
+             const redLightMat = new THREE.MeshStandardMaterial({
+                color: 0xff0000,
+                emissive: 0xff0000,
+                emissiveIntensity: 2
+            });
+             const signalLightMat = new THREE.MeshStandardMaterial({
+                color: 0x00aaff,
+                emissive: 0x00aaff,
+                emissiveIntensity: 1
+            });
+
+            // --- Main Body (White, slightly refined shape) ---
+            const bodyGeo = new THREE.BoxGeometry(2.0, 0.6, 3.2); // Slightly smaller, sleeker
+            const body = new THREE.Mesh(bodyGeo, whiteBodyMat);
             body.castShadow = true;
             droneGroup.add(body);
-            const armMat = new THREE.MeshStandardMaterial({ color: 0x555555 });
-            const armGeo = new THREE.CylinderGeometry(0.1, 0.1, 4, 6);
-            const arm1 = new THREE.Mesh(armGeo, armMat);
-            arm1.rotation.y = Math.PI / 4;
-            arm1.rotation.z = Math.PI / 2;
-            arm1.position.x = 2;
-            arm1.castShadow = true;
-            droneGroup.add(arm1);
-            const arm2 = new THREE.Mesh(armGeo, armMat);
-            arm2.rotation.y = -Math.PI / 4;
-            arm2.rotation.z = Math.PI / 2;
-            arm2.position.x = -2;
-            arm2.castShadow = true;
-            droneGroup.add(arm2);
-            const emitterMat = new THREE.MeshStandardMaterial({ color: 0x00aaff, emissive: 0x00aaff, emissiveIntensity: 1 });
-            const emitterGeo = new THREE.SphereGeometry(0.3, 8, 8);
-            const emitter = new THREE.Mesh(emitterGeo, emitterMat);
-            emitter.position.y = -0.5;
-            droneGroup.add(emitter);
-            return droneGroup;
-        }
 
-        // --- NEW, IMPROVED BASE STATION FUNCTION ---
-        function createGbsBaseStation() {
-            const towerGroup = new THREE.Group();
-            const baseMat = new THREE.MeshStandardMaterial({ color: 0xbbbbbb, roughness: 0.7 });
-            const darkMat = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.5 });
+            // --- Top plate for contrast (Dark grey) ---
+            const topPlateGeo = new THREE.BoxGeometry(1.6, 0.1, 2.6);
+            const topPlate = new THREE.Mesh(topPlateGeo, darkTopPlateMat);
+            topPlate.position.y = 0.35; 
+            droneGroup.add(topPlate);
+
+            // --- Arm Geometry (Thinner, more technical) ---
+            const armGeo = new THREE.BoxGeometry(2.8, 0.2, 0.1); // Longer and thinner
             
-            // Create a solid building base
-            const baseGeo = new THREE.BoxGeometry(10, 8, 10);
-            const baseBuilding = new THREE.Mesh(baseGeo, baseMat);
-            baseBuilding.position.y = 4; // Sits on the ground
-            baseBuilding.castShadow = true;
-            baseBuilding.receiveShadow = true;
-            towerGroup.add(baseBuilding);
+            // --- Propeller Geometry ---
+            const propGeo = new THREE.BoxGeometry(1.8, 0.02, 0.2);
+            
+            // --- Motor Geometry (Stacked Cylinders) ---
+            const motorBaseGeo = new THREE.CylinderGeometry(0.2, 0.18, 0.2, 8);
+            const motorTopGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.4, 8);
+            const lightGeo = new THREE.SphereGeometry(0.05, 6, 6);
+            
+            // Function to create one full arm assembly (Arm + Motor + Prop)
+            // It now takes `armAngle` for diagonal placement
+            function createArmAssembly(armAngle, lightMat) {
+                const armGroup = new THREE.Group(); // Group for arm, motor, prop, light
+                
+                const arm = new THREE.Mesh(armGeo, darkAccentMat);
+                arm.position.x = 1.4; // Position along the arm's local X
+                arm.castShadow = true;
+                armGroup.add(arm);
 
-            // Add a "door"
-            const doorGeo = new THREE.PlaneGeometry(1.5, 3);
-            const doorMat = new THREE.MeshStandardMaterial({ color: 0x444444 });
-            const door = new THREE.Mesh(doorGeo, doorMat);
-            door.position.set(0, 1.5, 5.01); // On the front face
-            towerGroup.add(door);
+                // Motor Group (Stacked Cylinders)
+                const motorGroup = new THREE.Group();
+                const motorBase = new THREE.Mesh(motorBaseGeo, darkAccentMat);
+                const motorTop = new THREE.Mesh(motorTopGeo, darkAccentMat);
+                motorTop.position.y = 0.3; 
+                motorGroup.add(motorBase, motorTop);
+                
+                motorGroup.position.x = 1.4; // End of the arm relative to armGroup's center
+                motorGroup.position.y = 0.2; 
+                arm.add(motorGroup); 
 
-            // Create a shorter lattice tower on top of the building
-            const towerMat = new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.6 });
-            const legGeo = new THREE.BoxGeometry(0.4, 20, 0.4); // Shorter legs
-            const leg1 = new THREE.Mesh(legGeo, towerMat); leg1.position.set(1.5, 18, 1.5); towerGroup.add(leg1); // 8 (base) + 10 (half leg)
-            const leg2 = new THREE.Mesh(legGeo, towerMat); leg2.position.set(-1.5, 18, 1.5); towerGroup.add(leg2);
-            const leg3 = new THREE.Mesh(legGeo, towerMat); leg3.position.set(1.5, 18, -1.5); towerGroup.add(leg3);
-            const leg4 = new THREE.Mesh(legGeo, towerMat); leg4.position.set(-1.5, 18, -1.5); towerGroup.add(leg4);
+                // Propeller
+                const prop = new THREE.Mesh(propGeo, propMat);
+                prop.position.y = 0.25; 
+                prop.userData.isPropeller = true; 
+                motorTop.add(prop);
+                
+                // Add light if material is provided
+                if (lightMat) {
+                    const light = new THREE.Mesh(lightGeo, lightMat);
+                    light.position.x = 1.4; // End of arm
+                    light.position.z = 0.1; // Front of arm
+                    arm.add(light);
+                }
 
-            // Simplified lattice
-            const trussGeo = new THREE.BoxGeometry(0.2, 0.2, 3); 
-            for (let y = 12; y < 28; y += 4) {
-                const h1 = new THREE.Mesh(trussGeo, towerMat); h1.position.set(0, y, 1.5); towerGroup.add(h1);
-                const h2 = new THREE.Mesh(trussGeo, towerMat); h2.position.set(0, y, -1.5); towerGroup.add(h2);
-                const h3 = new THREE.Mesh(trussGeo, towerMat); h3.rotation.y = Math.PI / 2; h3.position.set(1.5, y, 0); towerGroup.add(h3);
-                const h4 = new THREE.Mesh(trussGeo, towerMat); h4.rotation.y = Math.PI / 2; h4.position.set(-1.5, y, 0); towerGroup.add(h4);
+                // Rotate the entire arm group to its diagonal position
+                armGroup.rotation.y = armAngle;
+                droneGroup.add(armGroup); // Add the whole arm assembly to the droneGroup
+                
+                return armGroup; // Return the group to potentially store for later reference
             }
 
-            // Top platform with Antennas
-            const topGeo = new THREE.BoxGeometry(4, 1.5, 4);
-            const top = new THREE.Mesh(topGeo, darkMat);
-            top.position.y = 28.75; // 8 (base) + 20 (legs) + 0.75 (half top)
-            top.castShadow = true;
-            towerGroup.add(top);
-
-            // Main antenna
-            const antennaGeo = new THREE.CylinderGeometry(0.1, 0.1, 5, 8);
-            const antenna = new THREE.Mesh(antennaGeo, darkMat);
-            antenna.position.y = 32; // On top of the platform
-            towerGroup.add(antenna);
-
-            // "Dish" antenna
-            const dishGeo = new THREE.CylinderGeometry(1, 1, 0.3, 16);
-            const dish = new THREE.Mesh(dishGeo, darkMat);
-            dish.position.set(1.5, 29.5, 0);
-            dish.rotation.z = Math.PI / 4;
-            towerGroup.add(dish);
+            // Create 4 arms at perfect diagonal ends (Symmetrical)
+            const armOffset = 1.0; // Distance from center for the pivot of each arm
+            createArmAssembly(Math.PI / 4, greenLightMat);   // Front-right (Green)
+            createArmAssembly(Math.PI * 3 / 4, redLightMat); // Back-left (Red)
+            createArmAssembly(Math.PI * 5 / 4, redLightMat); // Back-right (Red)
+            createArmAssembly(Math.PI * 7 / 4, redLightMat); // Front-left (Red)
             
-            // "Panel" antenna
-            const panelGeo = new THREE.BoxGeometry(0.2, 1.5, 1);
-            const panel = new THREE.Mesh(panelGeo, darkMat);
-            panel.position.set(-1.5, 29.5, 0);
-            towerGroup.add(panel);
+            // --- Camera / Gimbal (Black) ---
+            const gimbalGroup = new THREE.Group();
+            const gimbalGeo = new THREE.SphereGeometry(0.25, 8, 8); // Slightly smaller gimbal
+            const gimbal = new THREE.Mesh(gimbalGeo, gimbalMat);
+            gimbal.position.y = -0.3;
+            gimbalGroup.add(gimbal);
+            
+            const lensGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.2, 8);
+            const lens = new THREE.Mesh(lensGeo, cameraMat);
+            lens.rotation.x = Math.PI / 2;
+            lens.position.z = 0.25;
+            gimbal.add(lens);
+            
+            // Position gimbal at the front
+            gimbalGroup.position.z = 1.4; // Slightly further forward for visual balance
+            gimbalGroup.position.y = -0.5; // Lower relative to body
+            droneGroup.add(gimbalGroup);
 
-            // ** Red X is removed. **
+            // --- Landing Gear (Skids) - More "technical" Boxy look, now black ---
+            const skidHorizGeo = new THREE.BoxGeometry(0.1, 0.1, 2.5); // Horizontal part of skid
+            const skidVertGeo = new THREE.BoxGeometry(0.1, 0.8, 0.1); // Vertical posts
+            
+            function createSkidSet(xPos) {
+                const skidGroup = new THREE.Group();
+                
+                const horizSkid = new THREE.Mesh(skidHorizGeo, darkAccentMat);
+                horizSkid.position.set(xPos, -1.0, 0); // Lower
+                skidGroup.add(horizSkid);
+                
+                const vertPost1 = new THREE.Mesh(skidVertGeo, darkAccentMat);
+                vertPost1.position.set(xPos, -0.6, 1.0); // Connects to body
+                skidGroup.add(vertPost1);
+                
+                const vertPost2 = new THREE.Mesh(skidVertGeo, darkAccentMat);
+                vertPost2.position.set(xPos, -0.6, -1.0); // Connects to body
+                skidGroup.add(vertPost2);
 
-            towerGroup.traverse(obj => { if (obj.isMesh) obj.castShadow = true; });
+                return skidGroup;
+            }
+            
+            droneGroup.add(createSkidSet(0.8)); // Symmetrical placement
+            droneGroup.add(createSkidSet(-0.8));
+
+            // --- Emitter (the blue light) ---
+            const emitter = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), signalLightMat); // Smaller emitter
+            emitter.position.y = 0; 
+            emitter.position.z = 0.15; // Slightly in front of lens
+            lens.add(emitter); // Add to lens
+
+            droneGroup.userData.name = "UAV (Drone)";
+            return droneGroup;
+        }
+        
+        function createGbsBaseStation() {
+            const towerGroup = new THREE.Group();
+            const antennaTopY = 31; 
+
+            const blackMat = new THREE.MeshBasicMaterial({ 
+                color: 0x111111, 
+                wireframe: true 
+            });
+            
+            const whiteMat = new THREE.MeshBasicMaterial({ 
+                color: 0xffffff,
+                wireframe: true 
+            });
+
+            const mainTowerGeo = new THREE.ConeGeometry(4, 30, 4, 10); 
+            const mainTower = new THREE.Mesh(mainTowerGeo, blackMat);
+            mainTower.position.y = 15; 
+            towerGroup.add(mainTower);
+
+            const centerSphere = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 8), whiteMat);
+            centerSphere.position.y = antennaTopY;
+            towerGroup.add(centerSphere);
+
+            const ring1 = new THREE.Mesh(new THREE.TorusGeometry(1, 0.1, 4, 12), whiteMat);
+            ring1.position.y = antennaTopY;
+            ring1.rotation.x = Math.PI / 2;
+            towerGroup.add(ring1);
+            
+            const ring2 = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.1, 4, 12), whiteMat);
+            ring2.position.y = antennaTopY;
+            ring2.rotation.x = Math.PI / 2;
+            towerGroup.add(ring2);
+            
+            const ring3 = new THREE.Mesh(new THREE.TorusGeometry(2, 0.1, 4, 12), whiteMat);
+            ring3.position.y = antennaTopY;
+            ring3.rotation.x = Math.PI / 2;
+            towerGroup.add(ring3);
+            
             return towerGroup;
         }
 
@@ -325,49 +669,60 @@
             const headMat = new THREE.MeshLambertMaterial({ color: 0xffdbac });
             const headGeo = new THREE.SphereGeometry(0.3, 8, 8);
             const head = new THREE.Mesh(headGeo, headMat);
-            head.position.y = 2.3;
+            head.position.y = 4.3; 
             head.castShadow = true;
             personGroup.add(head);
+
             const bodyMat = new THREE.MeshLambertMaterial({ color: new THREE.Color().setHSL(Math.random(), 0.7, 0.5) });
-            const bodyGeo = new THREE.CylinderGeometry(0.4, 0.3, 1, 8);
+            const bodyGeo = new THREE.CylinderGeometry(0.4, 0.3, 2.0, 8); 
             const body = new THREE.Mesh(bodyGeo, bodyMat);
-            body.position.y = 1.5;
+            body.position.y = 3.0; 
             body.castShadow = true;
             personGroup.add(body);
+
             const legsMat = new THREE.MeshLambertMaterial({ color: 0x444488 });
-            const legGeo = new THREE.CylinderGeometry(0.2, 0.15, 1, 6);
+            const legGeo = new THREE.CylinderGeometry(0.2, 0.15, 2.0, 6); 
             const leg1 = new THREE.Mesh(legGeo, legsMat);
-            leg1.position.set(0.2, 0.5, 0);
+            leg1.position.set(0.2, 1.0, 0); 
             leg1.castShadow = true;
             personGroup.add(leg1);
+
             const leg2 = new THREE.Mesh(legGeo, legsMat);
-            leg2.position.set(-0.2, 0.5, 0);
+            leg2.position.set(-0.2, 1.0, 0); 
             leg2.castShadow = true;
             personGroup.add(leg2);
-            return personGroup;
-        }
 
-        function createBuilding() {
-            const buildingGroup = new THREE.Group();
-            const floorCount = Math.floor(Math.random() * 3) + 2;
-            let currentHeight = 0;
-            for (let i = 0; i < floorCount; i++) {
-                const floorWidth = Math.random() * 5 + 8;
-                const floorDepth = Math.random() * 5 + 8;
-                const floorHeight = Math.random() * 2 + 3;
-                const floorGeo = new THREE.BoxGeometry(floorWidth, floorHeight, floorDepth);
-                const floorMat = new THREE.MeshStandardMaterial({
-                    color: new THREE.Color().setHSL(Math.random(), 0.5, 0.6),
-                    roughness: 0.8,
-                });
-                const floor = new THREE.Mesh(floorGeo, floorMat);
-                floor.position.y = currentHeight + floorHeight / 2;
-                floor.castShadow = true;
-                floor.receiveShadow = true;
-                buildingGroup.add(floor);
-                currentHeight += floorHeight;
-            }
-            return buildingGroup;
+            const armMat = new THREE.MeshLambertMaterial({ color: 0xffdbac }); 
+            const armGeo = new THREE.CylinderGeometry(0.1, 0.08, 1.4, 6);
+            
+            const arm1 = new THREE.Mesh(armGeo, armMat);
+            arm1.castShadow = true;
+            arm1.position.set(0.5, 3.2, 0); 
+            arm1.rotation.z = Math.PI / 4; 
+            personGroup.add(arm1);
+
+            const arm2 = new THREE.Mesh(armGeo, armMat);
+            arm2.castShadow = true;
+            arm2.position.set(-0.5, 3.2, 0); 
+            arm2.rotation.z = -Math.PI / 8; 
+            personGroup.add(arm2);
+
+            const phoneMat = new THREE.MeshStandardMaterial({ 
+                color: 0x111111, 
+                metalness: 0.8, 
+                roughness: 0.4 
+            });
+            const phoneGeo = new THREE.BoxGeometry(0.3, 0.6, 0.05);
+            const phone = new THREE.Mesh(phoneGeo, phoneMat);
+            phone.castShadow = true;
+            
+            phone.position.y = -0.5; 
+            phone.position.z = 0.1;  
+            phone.rotation.z = -Math.PI / 3; 
+            
+            arm1.add(phone); 
+
+            return personGroup;
         }
 
         function createTree() {
@@ -411,6 +766,17 @@
             interactiveObjects.push(person);
 
             createSignalLine(person);
+            
+            if (userStatsContainer) {
+                const userStatDiv = document.createElement('div');
+                userStatDiv.className = 'user-stat-card';
+                userStatDiv.id = `user-stat-${person.uuid}`; 
+                
+                userStatDiv.innerHTML = `<span class="label">${person.userData.name}</span><div class="value-container"><span class="value" id="rate-${person.uuid}">--</span> <span class="unit">bits/s/Hz</span></div>`;
+                
+                userStatsContainer.appendChild(userStatDiv);
+            }
+
             updateUserCount();
         }
 
@@ -428,6 +794,13 @@
                 interactiveObjects.splice(index, 1);
             }
 
+            if (userStatsContainer) {
+                const userStatDiv = document.getElementById(`user-stat-${person.uuid}`);
+                if (userStatDiv) {
+                    userStatsContainer.removeChild(userStatDiv);
+                }
+            }
+
             line.geometry.dispose();
             line.material.dispose();
             person.traverse(obj => {
@@ -439,8 +812,7 @@
 
             updateUserCount();
         }
-
-
+        
         // --- Interactivity Logic ---
 
         function createSignalLine(user) {
@@ -451,7 +823,7 @@
                 opacity: 0.7 
             });
             
-            const userHeadPos = user.position.clone().add(new THREE.Vector3(0, 2.3, 0)); 
+            const userHeadPos = user.position.clone().add(new THREE.Vector3(0, 4.3, 0)); 
             const points = [uav.position.clone(), userHeadPos]; 
             const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
             const line = new THREE.Line(lineGeo, lineMat.clone());
@@ -461,8 +833,6 @@
         }
 
         function createRedXTexture() {
-            // This function is no longer used, but we can leave it
-            // in case you want to add an X somewhere else.
             const size = 128;
             const canvas = document.createElement('canvas');
             canvas.width = size;
@@ -530,7 +900,6 @@
                 }
             } 
             else { 
-                // Hover logic
                 hoverRay.setFromCamera(mouse, camera);
                 const intersects = hoverRay.intersectObjects(interactiveObjects, true); 
                 
@@ -561,29 +930,80 @@
             controls.enabled = true;
         }
 
+        // --- NEW FUNCTION INSERTED HERE ---
+        function calculateDataRate(uavPos, userPos) {
+            // ------------------------------
+            // 1) Distance between UAV & User
+            // ------------------------------
+            const d = uavPos.distanceTo(userPos);
+
+            // ------------------------------
+            // 2) Channel Gain |h|^2
+            // Free-space or urban: d^-alpha
+            // ------------------------------
+            const alpha = 2.2;  // MMwave / urban LoS exponent (realistic)
+            const h_sq = 1 / Math.pow(d, alpha);
+
+            // ------------------------------
+            // 3) SINR = P * |h|^2 / noise
+            // ------------------------------
+            const P = UAV_POWER;         // you already have this
+            const noise = 1e-9;          // VERY IMPORTANT! realistic noise power
+
+            const SINR = (P * h_sq) / noise;
+
+            // ------------------------------
+            // 4) Rate (Shannon Capacity)
+            // returns: bits/s/Hz = spectral efficiency
+            // ------------------------------
+            const rate = Math.log2(1 + SINR);
+
+            return rate;
+        }
+
+
         // --- Animation Loop ---
         function animate() {
             requestAnimationFrame(animate);
             const time = Date.now();
             
             if (uav) {
+                
+                uav.traverse((child) => {
+                    if (child.isMesh && child.userData.isPropeller === true) {
+                        child.rotation.y += 0.5;
+                    }
+                });
+
                 if (!isDragging || draggedObject !== uav) { 
-                    uav.position.y = 15 + Math.sin(time * 0.0015) * 0.7;
+                    
+                    if (isRoaming) {
+                        uavRoamTarget.y = droneBaseHeight;
+                        uav.position.lerp(uavRoamTarget, 0.01);
+                        
+                        if (uav.position.distanceTo(uavRoamTarget) < 2.0) {
+                            setNewRoamTarget();
+                        }
+
+                    } else {
+                        uav.position.y = droneBaseHeight + Math.sin(time * 0.0015) * 0.7; 
+                        uavRoamTarget.set(uav.position.x, droneBaseHeight, uav.position.z);
+                    }
+                    
                     hoverPlane.set(new THREE.Vector3(0, 1, 0), -uav.position.y);
                 }
 
                 const uavPos = uav.position;
 
-                // Update UAV-to-User lines
                 signalLines.forEach((line, index) => {
                     const user = users[index];
                     if (!user) return; 
 
-                    const userHeadPos = user.position.clone().add(new THREE.Vector3(0, 2.3, 0));
+                    const userHeadPos = user.position.clone().add(new THREE.Vector3(0, 4.3, 0));
                     const positions = line.geometry.attributes.position.array;
                     
                     positions[0] = uavPos.x;
-                    positions[1] = uavPos.y;
+                    positions[1] = uavPos.y; // <-- THIS IS NOW CORRECT
                     positions[2] = uavPos.z;
                     
                     positions[3] = userHeadPos.x;
@@ -594,7 +1014,6 @@
                     line.material.opacity = 0.6 + Math.sin(time * 0.003 + index) * 0.3;
                 });
 
-                // Update Tower-to-UAV line
                 if (gbsToUavLine) {
                     const positions = gbsToUavLine.geometry.attributes.position.array;
                     positions[3] = uavPos.x; 
@@ -602,6 +1021,24 @@
                     positions[5] = uavPos.z; 
                     gbsToUavLine.geometry.attributes.position.needsUpdate = true;
                     gbsToUavLine.material.opacity = 0.5 + Math.cos(time * 0.002) * 0.3;
+                }
+
+                if (uav && users.length > 0) {
+                    users.forEach((user) => {
+                        const userStatDiv = document.getElementById(`user-stat-${user.uuid}`);
+                        if (userStatDiv) {
+                            const rate = calculateDataRate(uav.position, user.position);
+                            
+                            const valueSpan = userStatDiv.querySelector('.value'); 
+                            valueSpan.textContent = rate.toFixed(2);
+                            
+                            if (rate < 5.0) {
+                                valueSpan.className = 'value danger';
+                            } else {
+                                valueSpan.className = 'value';
+                            }
+                        }
+                    });
                 }
             }
 
